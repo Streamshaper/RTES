@@ -1,6 +1,8 @@
 CC := gcc
-CFLAGS := -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -MMD -MP
-LDLIBS := -pthread
+SYNTHETIC_BURST_DEMO ?= 0
+CFLAGS := -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DSYNTHETIC_BURST_DEMO=$(SYNTHETIC_BURST_DEMO) -MMD -MP -I/usr/include
+LDLIBS := -pthread -lwebsockets
+
 PI_CC ?= aarch64-linux-gnu-gcc
 PI_CFLAGS := $(CFLAGS)
 PI_LDLIBS := $(LDLIBS)
@@ -14,9 +16,13 @@ PI_TARGET := $(PI_BUILD_DIR)/main
 PI_OBJECTS := $(SOURCES:%.c=$(PI_BUILD_DIR)/%.o)
 PI_DEPENDS := $(PI_OBJECTS:.o=.d)
 
-.PHONY: all raspberry-pi clean
+.PHONY: all demo raspberry-pi clean
 
 all: $(TARGET)
+
+demo:
+	$(MAKE) clean
+	$(MAKE) SYNTHETIC_BURST_DEMO=1 all
 
 raspberry-pi: $(PI_TARGET)
 

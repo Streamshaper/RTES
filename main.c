@@ -1,29 +1,57 @@
 #include <pthread.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
 
-#include "threads.h"
 #include "queue.h"
+#include "threads.h"
 
+#define MONITOR_RUNTIME_SECONDS (48 * 60 * 60)
 
-int main ()
+/* Entry point for the real-time telemetry example. */
+int main(void)
 {
-  queue *fifo;
-  pthread_t pro, con;
+    queue_t *queue = NULL;
+    telemetry_context_t telemetry;
+    pthread_t producer_tid;
+    pthread_t consumer_tid;
+    pthread_t monitor_tid;
 
-  fifo = queueInit ();
-  if (fifo ==  NULL) {
-    fprintf (stderr, "main: Queue Init failed.\n");
-    exit (1);
-  }
-  pthread_create (&pro, NULL, producer, fifo);
-  pthread_create (&con, NULL, consumer, fifo);
-  pthread_join (pro, NULL);
-  pthread_join (con, NULL);
-  queueDelete (fifo);
+    queue = queue_create(DEFAULT_QUEUE_CAPACITY);
+    if (queue == NULL) {
+        fprintf(stderr, "main: queue initialization failed.\n");
+        return EXIT_FAILURE;
+    }
 
-  return 0;
+    if (telemetry_init(&telemetry, queue, MONITOR_RUNTIME_SECONDS) != 0) {
+        fprintf(stderr, "main: telemetry initialization failed.\n");
+        queue_destroy(queue);
+        return EXIT_FAILURE;
+    }
+
+    if (pthread_create(&producer_tid, NULL, producer_thread, &telemetry) != 0) {
+        fprintf(stderr, "main: producer thread creation failed.\n");
+        queue_destroy(queue);
+        return EXIT_FAILURE;
+    }
+
+    if (pthread_create(&consumer_tid, NULL, consumer_thread, &telemetry) != 0) {
+        fprintf(stderr, "main: consumer thread creation failed.\n");
+        queue_destroy(queue);
+        return EXIT_FAILURE;
+    }
+
+    if (pthread_create(&monitor_tid, NULL, monitor_thread, &telemetry) != 0) {
+        fprintf(stderr, "main: monitor thread creation failed.\n");
+        queue_destroy(queue);
+        return EXIT_FAILURE;
+    }
+
+    pthread_join(producer_tid, NULL);
+    pthread_join(consumer_tid, NULL);
+    pthread_join(monitor_tid, NULL);
+
+    queue_destroy(queue);
+    return EXIT_SUCCESS;
 }
 
 
