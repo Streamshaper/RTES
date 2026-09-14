@@ -1,7 +1,7 @@
 CC := gcc
 SYNTHETIC_BURST_DEMO ?= 0
 CFLAGS := -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DSYNTHETIC_BURST_DEMO=$(SYNTHETIC_BURST_DEMO) -MMD -MP -I/usr/include
-LDLIBS := -pthread -lwebsockets
+LDLIBS := -pthread -lwebsockets -lcjson
 
 PI_CC ?= aarch64-linux-gnu-gcc
 PI_CFLAGS := $(CFLAGS)

@@ -4,6 +4,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <cjson/cJSON.h>
+
 #include "threads.h"
 
 #define MESSAGE_BUFFER_SIZE 512
@@ -105,57 +107,35 @@ void telemetry_record_message(telemetry_context_t *ctx, message_kind_t kind)
 /* Parse the "kind" field from a JSON frame and map it to a message category. */
 message_kind_t parse_message_kind(const char *json)
 {
-    const char *kind_field = NULL;
-    const char *value_start = NULL;
-    const char *value_end = NULL;
-    char value[32];
-    size_t length = 0;
+    cJSON *root = NULL;
+    cJSON *kind = NULL;
+    message_kind_t message_kind = MESSAGE_KIND_UNKNOWN;
 
     if (json == NULL) {
         return MESSAGE_KIND_UNKNOWN;
     }
 
-    kind_field = strstr(json, "\"kind\"");
-    if (kind_field == NULL) {
+    root = cJSON_Parse(json);
+    if (root == NULL || !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
         return MESSAGE_KIND_UNKNOWN;
     }
 
-    value_start = strchr(kind_field, ':');
-    if (value_start == NULL) {
-        return MESSAGE_KIND_UNKNOWN;
+    kind = cJSON_GetObjectItemCaseSensitive(root, "kind");
+    if (cJSON_IsString(kind) && kind->valuestring != NULL) {
+        if (strcmp(kind->valuestring, "commit") == 0) {
+            message_kind = MESSAGE_KIND_COMMIT;
+        } else if (strcmp(kind->valuestring, "identity") == 0) {
+            message_kind = MESSAGE_KIND_IDENTITY;
+        } else if (strcmp(kind->valuestring, "account") == 0) {
+            message_kind = MESSAGE_KIND_ACCOUNT;
+        } else if (strcmp(kind->valuestring, "info") == 0) {
+            message_kind = MESSAGE_KIND_INFO;
+        }
     }
 
-    value_start++;
-    while (*value_start == ' ' || *value_start == '\t' || *value_start == '\n' || *value_start == '\r') {
-        value_start++;
-    }
-
-    if (*value_start != '"') {
-        return MESSAGE_KIND_UNKNOWN;
-    }
-
-    value_start++;
-    value_end = value_start;
-    while (*value_end != '\0' && *value_end != '"' && length < sizeof(value) - 1) {
-        value[length++] = *value_end;
-        value_end++;
-    }
-    value[length] = '\0';
-
-    if (strcmp(value, "commit") == 0) {
-        return MESSAGE_KIND_COMMIT;
-    }
-    if (strcmp(value, "identity") == 0) {
-        return MESSAGE_KIND_IDENTITY;
-    }
-    if (strcmp(value, "account") == 0) {
-        return MESSAGE_KIND_ACCOUNT;
-    }
-    if (strcmp(value, "info") == 0) {
-        return MESSAGE_KIND_INFO;
-    }
-
-    return MESSAGE_KIND_UNKNOWN;
+    cJSON_Delete(root);
+    return message_kind;
 }
 
 static queue_t *g_queue = NULL;
