@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -10,10 +11,10 @@
 #include "threads.h"
 
 #define MESSAGE_BUFFER_SIZE 512
-#define LOG_FILE_NAME "metrics_log.txt"
-#define TIMING_FILE_NAME "timing_metrics.txt"
-#define STATUS_LOG_FILE_NAME "status_log.csv"
-#define ZERO_FRAME_RECONNECT_THRESHOLD 4
+#define LOG_FILE_NAME "logs/metrics_log.txt"
+#define TIMING_FILE_NAME "logs/timing_metrics.txt"
+#define STATUS_LOG_FILE_NAME "logs/status_log.txt"
+#define ZERO_METRIC_WINDOW_THRESHOLD 3
 #define RECONNECT_DELAY_US 1000000
 
 #if SYNTHETIC_BURST_DEMO
@@ -174,26 +175,7 @@ message_kind_t parse_message_kind(const char *json)
 }
 
 static queue_t *g_queue = NULL;
-static int g_reconnect_requested = 0;
-static unsigned int g_consecutive_zero_frames = 0;
-
-static int frame_is_all_zero(const void *frame, size_t length)
-{
-    const unsigned char *bytes = (const unsigned char *)frame;
-    size_t index = 0;
-
-    if (frame == NULL || length == 0) {
-        return 0;
-    }
-
-    for (index = 0; index < length; ++index) {
-        if (bytes[index] != 0U) {
-            return 0;
-        }
-    }
-
-    return 1;
-}
+static atomic_int g_reconnect_requested = 0;
 
 static int jetstream_callback(struct lws *wsi,
                              enum lws_callback_reasons reason,
@@ -211,23 +193,6 @@ static int jetstream_callback(struct lws *wsi,
                 return 0;
             }
 
-            if (frame_is_all_zero(in, len)) {
-                g_consecutive_zero_frames++;
-                free(payload);
-
-                if (g_consecutive_zero_frames >= ZERO_FRAME_RECONNECT_THRESHOLD) {
-                        status_log("Received %u consecutive all-zero frames; reconnecting",
-                               g_consecutive_zero_frames);
-                    g_consecutive_zero_frames = 0;
-                    g_reconnect_requested = 1;
-                    return -1;
-                }
-
-                break;
-            }
-
-            g_consecutive_zero_frames = 0;
-
             memcpy(payload, in, len);
             payload[len] = '\0';
 
@@ -242,10 +207,10 @@ static int jetstream_callback(struct lws *wsi,
         }
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
             status_log("WebSocket connection error: %s", in != NULL ? (char *)in : "unknown");
-            g_reconnect_requested = 1;
+            atomic_store(&g_reconnect_requested, 1);
             break;
         case LWS_CALLBACK_CLOSED:
-            g_reconnect_requested = 1;
+            atomic_store(&g_reconnect_requested, 1);
             break;
         default:
             break;
@@ -304,9 +269,8 @@ void *producer_thread(void *args)
             continue;
         }
 
-        g_reconnect_requested = 0;
-        g_consecutive_zero_frames = 0;
-        while (!g_reconnect_requested) {
+        atomic_store(&g_reconnect_requested, 0);
+        while (!atomic_load(&g_reconnect_requested)) {
             lws_service(ctx->lws_context, 100);
         }
 
@@ -469,6 +433,7 @@ void *monitor_thread(void *args)
     struct timespec next_tick;
     struct timespec real_ts;
     struct timespec mono_now;
+    unsigned int consecutive_zero_windows = 0;
     const char *header = "Seconds,Nanoseconds,Commit_Count,Identity_Count,Account_Count,Info_Count,Buffer_Occupancy_Pct,CPU_Pct";
 
     if (ctx == NULL) {
@@ -569,6 +534,21 @@ void *monitor_thread(void *args)
         ctx->account_count = 0UL;
         ctx->info_count = 0UL;
         pthread_mutex_unlock(&ctx->mutex);
+
+        if (commit_count == 0UL && identity_count == 0UL &&
+            account_count == 0UL && info_count == 0UL) {
+            consecutive_zero_windows++;
+        } else {
+            consecutive_zero_windows = 0;
+        }
+
+        if (ctx->lws_wsi != NULL &&
+            consecutive_zero_windows >= ZERO_METRIC_WINDOW_THRESHOLD) {
+            status_log("Detected %u consecutive zero metric windows; reconnecting",
+                       consecutive_zero_windows);
+            atomic_store(&g_reconnect_requested, 1);
+            consecutive_zero_windows = 0;
+        }
 
         expected_ns = ctx->last_deadline_ns;
         actual_ns = ((long long)mono_now.tv_sec * 1000000000LL) + (long long)mono_now.tv_nsec;

@@ -8,7 +8,7 @@ PI_CFLAGS := $(CFLAGS)
 PI_LDLIBS := $(LDLIBS)
 
 TARGET := main
-SOURCES := main.c queue.c threads.c
+SOURCES := src/main.c src/queue.c src/threads.c
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDS := $(OBJECTS:.o=.d)
 PI_BUILD_DIR := build/raspberry-pi

@@ -1,2 +1,1 @@
-./timing_metrics.txt
-./metrics_log.txt
+logs/*.txt
