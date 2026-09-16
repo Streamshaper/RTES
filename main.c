@@ -18,30 +18,30 @@ int main(void)
 
     queue = queue_create(DEFAULT_QUEUE_CAPACITY);
     if (queue == NULL) {
-        fprintf(stderr, "main: queue initialization failed.\n");
+        status_log("main: queue initialization failed");
         return EXIT_FAILURE;
     }
 
     if (telemetry_init(&telemetry, queue, MONITOR_RUNTIME_SECONDS) != 0) {
-        fprintf(stderr, "main: telemetry initialization failed.\n");
+        status_log("main: telemetry initialization failed");
         queue_destroy(queue);
         return EXIT_FAILURE;
     }
 
     if (pthread_create(&producer_tid, NULL, producer_thread, &telemetry) != 0) {
-        fprintf(stderr, "main: producer thread creation failed.\n");
+        status_log("main: producer thread creation failed");
         queue_destroy(queue);
         return EXIT_FAILURE;
     }
 
     if (pthread_create(&consumer_tid, NULL, consumer_thread, &telemetry) != 0) {
-        fprintf(stderr, "main: consumer thread creation failed.\n");
+        status_log("main: consumer thread creation failed");
         queue_destroy(queue);
         return EXIT_FAILURE;
     }
 
     if (pthread_create(&monitor_tid, NULL, monitor_thread, &telemetry) != 0) {
-        fprintf(stderr, "main: monitor thread creation failed.\n");
+        status_log("main: monitor thread creation failed");
         queue_destroy(queue);
         return EXIT_FAILURE;
     }

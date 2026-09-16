@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -11,11 +12,45 @@
 #define MESSAGE_BUFFER_SIZE 512
 #define LOG_FILE_NAME "metrics_log.txt"
 #define TIMING_FILE_NAME "timing_metrics.txt"
+#define STATUS_LOG_FILE_NAME "status_log.csv"
+#define ZERO_FRAME_RECONNECT_THRESHOLD 4
+#define RECONNECT_DELAY_US 1000000
 
 #if SYNTHETIC_BURST_DEMO
 #define SYNTHETIC_BURST_START_MS 2000LL
 #define SYNTHETIC_BURST_HOLD_MS 3000LL
 #endif
+
+void status_log(const char *format, ...)
+{
+    static pthread_mutex_t status_log_mutex = PTHREAD_MUTEX_INITIALIZER;
+    FILE *status_file = NULL;
+    struct timespec timestamp;
+    struct tm local_timestamp;
+    char timestamp_text[32];
+    va_list args;
+
+    if (format == NULL) {
+        return;
+    }
+
+    clock_gettime(CLOCK_REALTIME, &timestamp);
+    localtime_r(&timestamp.tv_sec, &local_timestamp);
+    strftime(timestamp_text, sizeof(timestamp_text), "%Y-%m-%dT%H:%M:%S", &local_timestamp);
+
+    pthread_mutex_lock(&status_log_mutex);
+    status_file = fopen(STATUS_LOG_FILE_NAME, "a");
+    if (status_file != NULL) {
+        fprintf(status_file, "%s.%03ld,", timestamp_text, timestamp.tv_nsec / 1000000L);
+        va_start(args, format);
+        vfprintf(status_file, format, args);
+        va_end(args);
+        fputc('\n', status_file);
+        fflush(status_file);
+        fclose(status_file);
+    }
+    pthread_mutex_unlock(&status_log_mutex);
+}
 
 static int read_proc_stat_jiffies(unsigned long long *total_jiffies,
                                  unsigned long long *idle_jiffies)
@@ -139,6 +174,26 @@ message_kind_t parse_message_kind(const char *json)
 }
 
 static queue_t *g_queue = NULL;
+static int g_reconnect_requested = 0;
+static unsigned int g_consecutive_zero_frames = 0;
+
+static int frame_is_all_zero(const void *frame, size_t length)
+{
+    const unsigned char *bytes = (const unsigned char *)frame;
+    size_t index = 0;
+
+    if (frame == NULL || length == 0) {
+        return 0;
+    }
+
+    for (index = 0; index < length; ++index) {
+        if (bytes[index] != 0U) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
 
 static int jetstream_callback(struct lws *wsi,
                              enum lws_callback_reasons reason,
@@ -156,6 +211,23 @@ static int jetstream_callback(struct lws *wsi,
                 return 0;
             }
 
+            if (frame_is_all_zero(in, len)) {
+                g_consecutive_zero_frames++;
+                free(payload);
+
+                if (g_consecutive_zero_frames >= ZERO_FRAME_RECONNECT_THRESHOLD) {
+                        status_log("Received %u consecutive all-zero frames; reconnecting",
+                               g_consecutive_zero_frames);
+                    g_consecutive_zero_frames = 0;
+                    g_reconnect_requested = 1;
+                    return -1;
+                }
+
+                break;
+            }
+
+            g_consecutive_zero_frames = 0;
+
             memcpy(payload, in, len);
             payload[len] = '\0';
 
@@ -169,9 +241,11 @@ static int jetstream_callback(struct lws *wsi,
             break;
         }
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-            fprintf(stderr, "WebSocket connection error: %s\n", (char *)in);
+            status_log("WebSocket connection error: %s", in != NULL ? (char *)in : "unknown");
+            g_reconnect_requested = 1;
             break;
         case LWS_CALLBACK_CLOSED:
+            g_reconnect_requested = 1;
             break;
         default:
             break;
@@ -191,7 +265,6 @@ void *producer_thread(void *args)
     telemetry_context_t *ctx = (telemetry_context_t *)args;
     struct lws_context_creation_info info;
     struct lws_client_connect_info connect_info;
-    struct timespec start_time;
     const char *uri = "wss://jetstream1.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post";
 
     if (ctx == NULL || ctx->queue == NULL) {
@@ -208,7 +281,7 @@ void *producer_thread(void *args)
 
     ctx->lws_context = lws_create_context(&info);
     if (ctx->lws_context == NULL) {
-        fprintf(stderr, "Failed to create libwebsockets context.\n");
+        status_log("Failed to create libwebsockets context");
         return NULL;
     }
 
@@ -223,17 +296,22 @@ void *producer_thread(void *args)
     connect_info.ietf_version_or_minus_one = -1;
     connect_info.ssl_connection = 1;
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-    ctx->lws_wsi = lws_client_connect_via_info(&connect_info);
-    if (ctx->lws_wsi == NULL) {
-        fprintf(stderr, "Failed to connect to %s\n", uri);
-        lws_context_destroy(ctx->lws_context);
-        ctx->lws_context = NULL;
-        return NULL;
-    }
-
     while (1) {
-        lws_service(ctx->lws_context, 100);
+        ctx->lws_wsi = lws_client_connect_via_info(&connect_info);
+        if (ctx->lws_wsi == NULL) {
+            status_log("Failed to connect to %s; retrying", uri);
+            usleep(RECONNECT_DELAY_US);
+            continue;
+        }
+
+        g_reconnect_requested = 0;
+        g_consecutive_zero_frames = 0;
+        while (!g_reconnect_requested) {
+            lws_service(ctx->lws_context, 100);
+        }
+
+        ctx->lws_wsi = NULL;
+        usleep(RECONNECT_DELAY_US);
     }
 
     return NULL;

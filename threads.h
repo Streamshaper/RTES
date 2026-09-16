@@ -36,6 +36,7 @@ typedef struct {
 } telemetry_context_t;
 
 int telemetry_init(telemetry_context_t *ctx, queue_t *queue, long duration_seconds);
+void status_log(const char *format, ...);
 void telemetry_reset_window(telemetry_context_t *ctx);
 void telemetry_record_message(telemetry_context_t *ctx, message_kind_t kind);
 message_kind_t parse_message_kind(const char *json);
