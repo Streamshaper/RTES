@@ -12,7 +12,6 @@
 
 #define MESSAGE_BUFFER_SIZE 512
 #define LOG_FILE_NAME "logs/metrics_log.txt"
-#define TIMING_FILE_NAME "logs/timing_metrics.txt"
 #define STATUS_LOG_FILE_NAME "logs/status_log.txt"
 #define ZERO_METRIC_WINDOW_THRESHOLD 3
 #define RECONNECT_DELAY_US 1000000
@@ -93,8 +92,6 @@ int telemetry_init(telemetry_context_t *ctx, queue_t *queue, long duration_secon
     ctx->queue = queue;
     ctx->stop_requested = 0;
     ctx->duration_seconds = duration_seconds;
-    ctx->last_deadline_ns = 0;
-    ctx->drift_ns = 0;
     clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);
     pthread_mutex_init(&ctx->mutex, NULL);
     return 0;
@@ -432,7 +429,6 @@ void *monitor_thread(void *args)
     FILE *log_file = NULL;
     struct timespec next_tick;
     struct timespec real_ts;
-    struct timespec mono_now;
     unsigned int consecutive_zero_windows = 0;
     const char *header = "Seconds,Nanoseconds,Commit_Count,Identity_Count,Account_Count,Info_Count,Buffer_Occupancy_Pct,CPU_Pct";
 
@@ -461,35 +457,15 @@ void *monitor_thread(void *args)
     }
     fflush(log_file);
 
-    FILE *timing_file = fopen(TIMING_FILE_NAME, "a");
 #if SYNTHETIC_BURST_DEMO
     struct timespec burst_start;
     int synthetic_burst_triggered = 0;
 #endif
-    if (timing_file != NULL) {
-        if (access(TIMING_FILE_NAME, F_OK) == 0) {
-            long timing_size = 0;
-            FILE *timing_probe = fopen(TIMING_FILE_NAME, "rb");
-            if (timing_probe != NULL) {
-                fseek(timing_probe, 0, SEEK_END);
-                timing_size = ftell(timing_probe);
-                fclose(timing_probe);
-            }
-            if (timing_size == 0L) {
-                fprintf(timing_file, "Seconds,Nanoseconds,Jitter_ns,Drift_ns\n");
-            }
-        } else {
-            fprintf(timing_file, "Seconds,Nanoseconds,Jitter_ns,Drift_ns\n");
-        }
-        fflush(timing_file);
-    }
-
     clock_gettime(CLOCK_MONOTONIC, &next_tick);
 #if SYNTHETIC_BURST_DEMO
     clock_gettime(CLOCK_MONOTONIC, &burst_start);
 #endif
     next_tick.tv_sec += 1;
-    ctx->last_deadline_ns = ((long long)next_tick.tv_sec * 1000000000LL) + (long long)next_tick.tv_nsec;
 
     while (1) {
         unsigned long commit_count = 0UL;
@@ -498,9 +474,6 @@ void *monitor_thread(void *args)
         unsigned long info_count = 0UL;
         double occupancy_pct = 0.0;
         double cpu_pct = 0.0;
-        long long expected_ns = 0LL;
-        long long actual_ns = 0LL;
-        long long jitter_ns = 0LL;
     #if SYNTHETIC_BURST_DEMO
         struct timespec now_ts;
         long long elapsed_ms = 0LL;
@@ -520,7 +493,6 @@ void *monitor_thread(void *args)
     #endif
 
         clock_gettime(CLOCK_REALTIME, &real_ts);
-        clock_gettime(CLOCK_MONOTONIC, &mono_now);
         cpu_pct = read_cpu_usage_percent(ctx);
         occupancy_pct = queue_occupancy_pct(ctx->queue);
 
@@ -550,12 +522,6 @@ void *monitor_thread(void *args)
             consecutive_zero_windows = 0;
         }
 
-        expected_ns = ctx->last_deadline_ns;
-        actual_ns = ((long long)mono_now.tv_sec * 1000000000LL) + (long long)mono_now.tv_nsec;
-        jitter_ns = llabs(actual_ns - expected_ns);
-        ctx->drift_ns += (actual_ns - expected_ns);
-        ctx->last_deadline_ns += 1000000000LL;
-
         fprintf(log_file,
                 "%ld,%ld,%lu,%lu,%lu,%lu,%.2f,%.2f\n",
                 (long)real_ts.tv_sec,
@@ -568,22 +534,9 @@ void *monitor_thread(void *args)
                 cpu_pct);
         fflush(log_file);
 
-        if (timing_file != NULL) {
-            fprintf(timing_file,
-                    "%ld,%ld,%lld,%lld\n",
-                    (long)real_ts.tv_sec,
-                    (long)real_ts.tv_nsec,
-                    jitter_ns,
-                    ctx->drift_ns);
-            fflush(timing_file);
-        }
-
         next_tick.tv_sec += 1;
     }
 
-    if (timing_file != NULL) {
-        fclose(timing_file);
-    }
     fclose(log_file);
     return NULL;
 }

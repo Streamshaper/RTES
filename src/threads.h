@@ -22,8 +22,6 @@ typedef struct {
     int synthetic_burst_active;
     int stop_requested;
     struct timespec start_time;
-    long long last_deadline_ns;
-    long long drift_ns;
     struct lws_context *lws_context;
     struct lws *lws_wsi;
     unsigned long commit_count;
