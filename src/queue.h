@@ -4,7 +4,7 @@
 #include <pthread.h>
 #include <stddef.h>
 
-#define DEFAULT_QUEUE_CAPACITY 128
+#define DEFAULT_QUEUE_CAPACITY 32
 
 /* Bounded circular queue used as the producer-consumer buffer. */
 typedef struct {
