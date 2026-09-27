@@ -1,30 +1,33 @@
 CC := gcc
 SYNTHETIC_BURST_DEMO ?= 0
+# Standard build flags for safety, modern C, and dependency tracking.
 CFLAGS := -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -DSYNTHETIC_BURST_DEMO=$(SYNTHETIC_BURST_DEMO) -MMD -MP -I/usr/include
 LDLIBS := -pthread -lwebsockets -lcjson
-
-PI_CC ?= aarch64-linux-gnu-gcc
-PI_CFLAGS := $(CFLAGS)
-PI_LDLIBS := $(LDLIBS)
 
 TARGET := main
 SOURCES := src/main.c src/queue.c src/threads.c
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDS := $(OBJECTS:.o=.d)
-PI_BUILD_DIR := build/raspberry-pi
-PI_TARGET := $(PI_BUILD_DIR)/main
-PI_OBJECTS := $(SOURCES:%.c=$(PI_BUILD_DIR)/%.o)
-PI_DEPENDS := $(PI_OBJECTS:.o=.d)
 
-.PHONY: all demo raspberry-pi clean
+.PHONY: all demo clean help
 
 all: $(TARGET)
 
+# Displays usage information and available options.
+help:
+	@echo "Available targets:"
+	@echo "  all      : Build the main executable (default)"
+	@echo "  demo     : Clean and rebuild the project with the synthetic burst load tester enabled"
+	@echo "  clean    : Remove all build artifacts (objects, dependencies, and executable)"
+	@echo "  help     : Display this help message"
+	@echo ""
+	@echo "Available options:"
+	@echo "  SYNTHETIC_BURST_DEMO=1 : Compile with synthetic burst load testing (default is 0)"
+
+# Rebuilds the project with the synthetic burst load tester enabled.
 demo:
 	$(MAKE) clean
 	$(MAKE) SYNTHETIC_BURST_DEMO=1 all
-
-raspberry-pi: $(PI_TARGET)
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) $(LDLIBS) -o $@
@@ -32,14 +35,7 @@ $(TARGET): $(OBJECTS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(PI_TARGET): $(PI_OBJECTS)
-	$(PI_CC) $(PI_OBJECTS) $(PI_LDLIBS) -o $@
-
-$(PI_BUILD_DIR)/%.o: %.c
-	mkdir -p $(@D)
-	$(PI_CC) $(PI_CFLAGS) -c $< -o $@
-
--include $(DEPENDS) $(PI_DEPENDS)
+-include $(DEPENDS)
 
 clean:
-	rm -rf $(TARGET) $(OBJECTS) $(DEPENDS) build
+	rm -rf $(TARGET) $(OBJECTS) $(DEPENDS)

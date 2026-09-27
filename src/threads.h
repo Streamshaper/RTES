@@ -8,6 +8,7 @@
 
 #include "queue.h"
 
+// Parsed message categories from JSON frames.
 typedef enum {
     MESSAGE_KIND_COMMIT = 0,
     MESSAGE_KIND_IDENTITY,
@@ -16,18 +17,23 @@ typedef enum {
     MESSAGE_KIND_UNKNOWN
 } message_kind_t;
 
+// Central state shared among producer, consumer, and monitor threads.
 typedef struct {
     queue_t *queue;
-    pthread_mutex_t mutex;
+    pthread_mutex_t mutex;         // Protects counter increments and synthetic flag.
     int synthetic_burst_active;
     int stop_requested;
     struct timespec start_time;
     struct lws_context *lws_context;
     struct lws *lws_wsi;
+    
+    // Per-second rolling message counters.
     unsigned long commit_count;
     unsigned long identity_count;
     unsigned long account_count;
     unsigned long info_count;
+    
+    // Jiffy tracking for CPU utilization calculation.
     unsigned long long prev_total_jiffies;
     unsigned long long prev_idle_jiffies;
     long duration_seconds;

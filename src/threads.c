@@ -21,6 +21,7 @@
 #define SYNTHETIC_BURST_HOLD_MS 3000LL
 #endif
 
+// Thread-safe diagnostic logging to disk with high-res timestamps.
 void status_log(const char *format, ...)
 {
     static pthread_mutex_t status_log_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -52,6 +53,7 @@ void status_log(const char *format, ...)
     pthread_mutex_unlock(&status_log_mutex);
 }
 
+// Reads system CPU time to compute percentage utilization later.
 static int read_proc_stat_jiffies(unsigned long long *total_jiffies,
                                  unsigned long long *idle_jiffies)
 {
@@ -111,6 +113,7 @@ void telemetry_reset_window(telemetry_context_t *ctx)
     pthread_mutex_unlock(&ctx->mutex);
 }
 
+// Increments the appropriate metric counter based on frame type.
 void telemetry_record_message(telemetry_context_t *ctx, message_kind_t kind)
 {
     if (ctx == NULL) {
@@ -154,6 +157,7 @@ message_kind_t parse_message_kind(const char *json)
         return MESSAGE_KIND_UNKNOWN;
     }
 
+    // Safely extract string to categorize metric.
     kind = cJSON_GetObjectItemCaseSensitive(root, "kind");
     if (cJSON_IsString(kind) && kind->valuestring != NULL) {
         if (strcmp(kind->valuestring, "commit") == 0) {
@@ -174,6 +178,7 @@ message_kind_t parse_message_kind(const char *json)
 static queue_t *g_queue = NULL;
 static atomic_int g_reconnect_requested = 0;
 
+// libwebsockets event handler.
 static int jetstream_callback(struct lws *wsi,
                              enum lws_callback_reasons reason,
                              void *user,
@@ -193,6 +198,7 @@ static int jetstream_callback(struct lws *wsi,
             memcpy(payload, in, len);
             payload[len] = '\0';
 
+            // Push payload to queue; retry on backpressure.
             if (g_queue != NULL) {
                 while (queue_push(g_queue, payload) != 0) {
                     usleep(1000);
@@ -258,6 +264,7 @@ void *producer_thread(void *args)
     connect_info.ietf_version_or_minus_one = -1;
     connect_info.ssl_connection = 1;
 
+    // Endless auto-reconnect loop driven by atomic flag.
     while (1) {
         ctx->lws_wsi = lws_client_connect_via_info(&connect_info);
         if (ctx->lws_wsi == NULL) {
@@ -291,6 +298,7 @@ void *consumer_thread(void *args)
         return NULL;
     }
 
+    // Continuous processing loop pulling frames off the queue.
     while (1) {
 #if SYNTHETIC_BURST_DEMO
         pthread_mutex_lock(&ctx->mutex);
@@ -301,7 +309,7 @@ void *consumer_thread(void *args)
         if (queue_pop(ctx->queue, buffer, sizeof(buffer)) != 0) {
 #if SYNTHETIC_BURST_DEMO
             if (synthetic_active) {
-                usleep(20000);
+                usleep(20000); // Artificial slowdown during burst test.
             }
 #endif
             continue;
@@ -319,6 +327,7 @@ void *consumer_thread(void *args)
     return NULL;
 }
 
+// Compute delta between consecutive jiffy snapshots for CPU utilization.
 double read_cpu_usage_percent(telemetry_context_t *ctx)
 {
     unsigned long long current_total_jiffies = 0ULL;
@@ -363,6 +372,7 @@ double read_cpu_usage_percent(telemetry_context_t *ctx)
 }
 
 #if SYNTHETIC_BURST_DEMO
+// Simulates an instantaneous spike of messages to test queue backpressure.
 static void enqueue_synthetic_burst(telemetry_context_t *ctx, size_t burst_count)
 {
     char payload[128];
@@ -441,6 +451,7 @@ void *monitor_thread(void *args)
         return NULL;
     }
 
+    // Write header if the file is fresh.
     if (access(LOG_FILE_NAME, F_OK) == 0) {
         long file_size = 0;
         FILE *size_check = fopen(LOG_FILE_NAME, "rb");
@@ -479,6 +490,7 @@ void *monitor_thread(void *args)
         long long elapsed_ms = 0LL;
     #endif
 
+        // Sleep accurately until exactly the next 1-second boundary.
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_tick, NULL);
 
     #if SYNTHETIC_BURST_DEMO
@@ -496,6 +508,7 @@ void *monitor_thread(void *args)
         cpu_pct = read_cpu_usage_percent(ctx);
         occupancy_pct = queue_occupancy_pct(ctx->queue);
 
+        // Safely extract and clear the rolling counters.
         pthread_mutex_lock(&ctx->mutex);
         commit_count = ctx->commit_count;
         identity_count = ctx->identity_count;
@@ -507,6 +520,7 @@ void *monitor_thread(void *args)
         ctx->info_count = 0UL;
         pthread_mutex_unlock(&ctx->mutex);
 
+        // Check for silent connection.
         if (commit_count == 0UL && identity_count == 0UL &&
             account_count == 0UL && info_count == 0UL) {
             consecutive_zero_windows++;
@@ -514,6 +528,7 @@ void *monitor_thread(void *args)
             consecutive_zero_windows = 0;
         }
 
+        // Watchdog mechanism: reset socket if we receive nothing for N seconds.
         if (ctx->lws_wsi != NULL &&
             consecutive_zero_windows >= ZERO_METRIC_WINDOW_THRESHOLD) {
             status_log("Detected %u consecutive zero metric windows; reconnecting",

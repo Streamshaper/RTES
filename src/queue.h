@@ -8,14 +8,14 @@
 
 /* Bounded circular queue used as the producer-consumer buffer. */
 typedef struct {
-    char **items;
-    size_t capacity;
-    size_t head;
-    size_t tail;
-    size_t count;
-    pthread_mutex_t mutex;
-    pthread_cond_t not_empty;
-    pthread_cond_t not_full;
+    char **items;              // Array of dynamically allocated string payloads.
+    size_t capacity;           // Maximum item limit.
+    size_t head;               // Read index for consumers.
+    size_t tail;               // Write index for producers.
+    size_t count;              // Current number of items.
+    pthread_mutex_t mutex;     // Protects queue state.
+    pthread_cond_t not_empty;  // Signals consumer when data arrives.
+    pthread_cond_t not_full;   // Signals producer when space clears.
 } queue_t;
 
 queue_t *queue_create(size_t capacity);
