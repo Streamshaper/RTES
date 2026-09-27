@@ -37,7 +37,7 @@ sudo apt-get install build-essential libwebsockets-dev libcjson-dev
 
 ## Building the Project
 
-The project includes a `Makefile` with several targets for easy compilation.
+**Note on Target Platform**: The provided Makefile is configured for native compilation. To deploy this logger on a Raspberry Pi, you must clone the repository and build the project directly on the Pi itself, rather than attempting to cross-compile from another machine.
 
 * **Build the standard executable**:
 ```bash
