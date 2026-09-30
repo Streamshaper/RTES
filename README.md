@@ -179,3 +179,6 @@ sudo systemctl enable --now bluesky-logger.timer
 sudo systemctl enable --now bluesky-logger-stop.timer
 
 ```
+
+## Collected Data
+The folder `collected_data_20_09` contains the `metrics_log.txt` and `status_log.txt` files generated during the 20/09/2026 logging session as deliverables for the Real Time & Embedded Systems class. The messages in `status_log.txt` can help identify potentially inaccurate data (zeros) in the `metrics_log.txt` recorded during a network disconnection.
